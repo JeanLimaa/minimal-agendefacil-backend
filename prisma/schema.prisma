@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+enum Role {
+  CLIENT
+  ADMIN
+}
+
+enum Platform {
+  ANDROID
+  IOS
+  WEB
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+// ============================================
+
+// ============================================
+// MODELS
+// ============================================
+
+model User {
+  id       Int    @id @default(autoincrement())
+  email    String @unique
+  password String
+  role     Role
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
+
+  // Relacionamento com empresa (apenas para ADMIN)
+  companyId Int?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  @@map("users")
+}
+
+model Client {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String
+  email     String?  // Email opcional para clientes convidados
+  
+  // Relacionamento com empresa
+  companyId Int
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  // Bloqueio de cliente
+  isBlocked Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
+
+  // Agendamentos do cliente
+  appointments Appointment[]
+
+  @@map("clients")
+}
+
+model AppointmentService {
+  id            Int        @id @default(autoincrement())
+
+  appointmentId Int
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  serviceId     Int
+  service       Service     @relation(fields: [serviceId], references: [id])
+
+  @@unique([appointmentId, serviceId]) // Garante que um serviço não seja duplicado em um mesmo agendamento
+  @@map("appointment_services")
+}
+
+model Company {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  email       String   @unique
+  phone       String
+  
+  // Link personalizado da empresa
+  link        String   @unique
+
+  // Intervalo entre agendamentos (em minutos)
+  intervalBetweenAppointments Int @default(15)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt()
+
+  // Relacionamentos
+  users              User[]
+  clients            Client[]
+  services           Service[]
+  appointments       Appointment[]
+  companyAddress     CompanyAddress?
+  companyWorkingHours CompanyWorkingHour[]
+
+  @@map("companies")
+}
+
+model Service {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  duration    Int      // Duração em minutos
+  price       Decimal  @db.Decimal(10, 2)
+  
+  // Relacionamento com empresa
+  companyId   Int
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  // Soft delete
+  deletedAt   DateTime?
+  isActive    Boolean  @default(true)
+
+  appointmentService AppointmentService[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt()
+
+  @@map("services")
+}
+
+model Appointment {
+  id        Int               @id @default(autoincrement())
+  date      DateTime
+  status    AppointmentStatus @default(PENDING)
+
+  // Relacionamento com cliente
+  clientId  Int
+  client    Client            @relation(fields: [clientId], references: [id])
+
+  // Relacionamento com empresa (direto, sem funcionário)
+  companyId Int
+  company   Company           @relation(fields: [companyId], references: [id])
+
+  appointmentService AppointmentService[]
+
+  subTotalPrice Decimal @db.Decimal(10, 2) // Preço subtotal do agendamento
+  discount     Decimal @db.Decimal(10, 2) @default(0) // Desconto aplicado (se houver)
+  totalPrice Decimal @db.Decimal(10, 2) // Preço total do agendamento
+
+  duration  Int               // Duração em minutos
+
+  // Observações
+  notes     String?
+
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt()
+
+  @@map("appointments")
+}
+
+model CompanyAddress {
+  id          Int      @id @default(autoincrement())
+  street      String
+  number      String
+  neighborhood String
+  city        String
+  state       String
+  zipCode     String
+  country     String   @default("Brasil")
+
+  companyId   Int      @unique
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt()
+
+  @@map("company_addresses")
+}
+
+model CompanyWorkingHour {
+  id        Int      @id @default(autoincrement())
+  dayOfWeek Int      // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+  startTime String   // Formato HH:mm (ex: "09:00")
+  endTime   String   // Formato HH:mm (ex: "18:00")
+  isClosed  Boolean  @default(false)
+
+  companyId Int
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
+
+  @@unique([companyId, dayOfWeek])
+  @@map("company_working_hours")
+}
+
+model AppVersion {
+  id            Int      @id @default(autoincrement())
+  platform      Platform
+  minVersion    String   // Versão mínima suportada (ex: "2.0.0")
+  latestVersion String   // Última versão disponível (ex: "2.3.1")
+  forceUpdate   Boolean  @default(false)
+  downloadUrl   String?
+  isActive      Boolean  @default(true)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([platform])
+  @@map("app_versions")
+}
