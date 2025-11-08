@@ -139,9 +139,9 @@ model Appointment {
   date      DateTime
   status    AppointmentStatus @default(PENDING)
 
-  // Relacionamento com cliente
-  clientId  Int
-  client    Client            @relation(fields: [clientId], references: [id])
+  // Relacionamento com cliente (opcional para bloqueios)
+  clientId  Int?
+  client    Client?           @relation(fields: [clientId], references: [id])
 
   // Relacionamento com empresa (direto, sem funcionário)
   companyId Int
@@ -154,6 +154,9 @@ model Appointment {
   totalPrice Decimal @db.Decimal(10, 2) // Preço total do agendamento
 
   duration  Int               // Duração em minutos
+
+  // Indica se este agendamento é um bloqueio de horário
+  isBlock   Boolean           @default(false)
 
   // Observações
   notes     String?

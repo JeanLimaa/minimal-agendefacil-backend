@@ -63,7 +63,6 @@ export class AppointmentService {
           
           companyId = client.companyId;
         } else {
-          // type === 'client'
           const clientData = data as CreateClientAppointmentDto;
           companyId = clientData.companyId;
 
@@ -127,47 +126,6 @@ export class AppointmentService {
         throw new BadRequestException('Empresa não encontrada.');
       }
 
-      // Busca ou cria o cliente especial "Bloqueio"
-      let blockClient = await this.prisma.client.findFirst({
-        where: { 
-          name: 'Bloqueio',
-          companyId,
-        },
-      });
-
-      if (!blockClient) {
-        blockClient = await this.prisma.client.create({
-          data: {
-            name: 'Bloqueio',
-            phone: '0000000000',
-            email: 'bloqueio@sistema.com',
-            companyId,
-            isBlocked: true,
-          },
-        });
-      }
-
-      // Busca ou cria o serviço especial "__BLOCK__"
-      let blockService = await this.prisma.service.findFirst({
-        where: {
-          name: '__BLOCK__',
-          companyId,
-        },
-      });
-
-      if (!blockService) {
-        blockService = await this.prisma.service.create({
-          data: {
-            name: '__BLOCK__',
-            description: 'Serviço reservado para bloqueio de horários',
-            duration: 0,
-            price: 0,
-            companyId,
-            isActive: false, // Não deve aparecer para clientes
-          },
-        });
-      }
-
       const start = parseISO(dto.startDate);
       const end = parseISO(dto.endDate);
       const duration = differenceInMinutes(end, start);
@@ -182,14 +140,14 @@ export class AppointmentService {
       const appointment = await this.prisma.appointment.create({
         data: {
           date: start,
-          clientId: blockClient.id,
           companyId: companyId,
           subTotalPrice: 0,
           discount: 0,
           totalPrice: 0,
           duration: duration,
           status: AppointmentStatus.CONFIRMED,
-          notes: 'Bloqueio de agenda',
+          isBlock: true,
+          notes: dto.notes || 'Bloqueio de agenda',
         },
       });
 
@@ -227,9 +185,7 @@ export class AppointmentService {
                   lt: startDate,
                 },
               },
-              // Verifica se termina após o início do bloqueio usando duration
-              // Não podemos fazer isso diretamente no Prisma, então pegamos os conflitos potenciais
-            ],
+           ],
           },
         ],
       },
@@ -287,12 +243,7 @@ export class AppointmentService {
       const appointments = await this.prisma.appointment.findMany({
         where: { 
           status: AppointmentStatus.PENDING,
-          // Exclui bloqueios (appointments com cliente especial "Bloqueio")
-          client: {
-            name: {
-              not: 'Bloqueio',
-            },
-          },
+          isBlock: false, // Exclui bloqueios
         },
         include: {
           client: true,
@@ -318,12 +269,7 @@ export class AppointmentService {
       const appointments = await this.prisma.appointment.findMany({
         where: {
           companyId,
-          // Exclui bloqueios (appointments com cliente especial "Bloqueio")
-          client: {
-            name: {
-              not: 'Bloqueio',
-            },
-          },
+          isBlock: false, // Exclui bloqueios
         },
         include: {
           client: true,
@@ -372,10 +318,7 @@ export class AppointmentService {
       });
 
       if (appointment) {
-        // Verifica se é um bloqueio
-        const isBlock = appointment.client.name === 'Bloqueio';
-        
-        if (!isBlock) {
+        if (!appointment.isBlock) {
           this.logger.log('Appointment found successfully', { 
             appointmentId: id, 
             clientId: appointment.clientId, 
@@ -423,16 +366,7 @@ export class AppointmentService {
       const blocks = await this.prisma.appointment.findMany({
         where: {
           companyId,
-          client: {
-            name: 'Bloqueio',
-          },
-        },
-        include: {
-          client: {
-            select: {
-              name: true,
-            },
-          },
+          isBlock: true,
         },
         orderBy: {
           date: 'desc',
@@ -458,9 +392,6 @@ export class AppointmentService {
       // Verifica se o bloqueio existe e pertence à empresa
       const block = await this.prisma.appointment.findUnique({
         where: { id },
-        include: {
-          client: true,
-        },
       });
 
       if (!block) {
@@ -468,7 +399,7 @@ export class AppointmentService {
         throw new BadRequestException('Bloqueio não encontrado.');
       }
 
-      if (block.client.name !== 'Bloqueio') {
+      if (!block.isBlock) {
         this.logger.warn('Attempted to delete non-block appointment as block', { appointmentId: id });
         throw new BadRequestException('Este agendamento não é um bloqueio.');
       }
