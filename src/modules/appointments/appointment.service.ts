@@ -110,19 +110,19 @@ export class AppointmentService {
     }
   }
 
-  public async createBlock(dto: BlockAppointmentDto): Promise<Appointment> {
+  public async createBlock(dto: BlockAppointmentDto, companyId: number): Promise<Appointment> {
     try {
       this.logger.log('Creating block appointment', { 
-        companyId: dto.companyId, 
+        companyId, 
         startDate: dto.startDate, 
         endDate: dto.endDate 
       });
-
+      
       // Verifica se a empresa existe
       const company = await this.prisma.company.findUnique({
-        where: { id: dto.companyId },
+        where: { id: companyId },
       });
-
+      
       if (!company) {
         throw new BadRequestException('Empresa não encontrada.');
       }
@@ -131,7 +131,7 @@ export class AppointmentService {
       let blockClient = await this.prisma.client.findFirst({
         where: { 
           name: 'Bloqueio',
-          companyId: dto.companyId,
+          companyId,
         },
       });
 
@@ -141,7 +141,7 @@ export class AppointmentService {
             name: 'Bloqueio',
             phone: '0000000000',
             email: 'bloqueio@sistema.com',
-            companyId: dto.companyId,
+            companyId,
             isBlocked: true,
           },
         });
@@ -151,7 +151,7 @@ export class AppointmentService {
       let blockService = await this.prisma.service.findFirst({
         where: {
           name: '__BLOCK__',
-          companyId: dto.companyId,
+          companyId,
         },
       });
 
@@ -162,7 +162,7 @@ export class AppointmentService {
             description: 'Serviço reservado para bloqueio de horários',
             duration: 0,
             price: 0,
-            companyId: dto.companyId,
+            companyId,
             isActive: false, // Não deve aparecer para clientes
           },
         });
@@ -177,13 +177,13 @@ export class AppointmentService {
       }
 
       // Verifica conflitos de horário
-      await this.checkForBlockConflicts(start, end, dto.companyId);
+      await this.checkForBlockConflicts(start, end, companyId);
 
       const appointment = await this.prisma.appointment.create({
         data: {
           date: start,
           clientId: blockClient.id,
-          companyId: dto.companyId,
+          companyId: companyId,
           subTotalPrice: 0,
           discount: 0,
           totalPrice: 0,
@@ -195,13 +195,13 @@ export class AppointmentService {
 
       this.logger.log('Block appointment created successfully', { 
         appointmentId: appointment.id, 
-        companyId: dto.companyId, 
+        companyId: companyId, 
         duration 
       });
 
       return appointment;
     } catch (error) {
-      this.logger.error('Error creating block appointment', error.stack, { companyId: dto.companyId });
+      this.logger.error('Error creating block appointment', error.stack, { companyId });
       throw error;
     }
   }
@@ -412,6 +412,88 @@ export class AppointmentService {
       return result;
     } catch (error) {
       this.logger.error('Error deleting appointment', error.stack, { appointmentId: id });
+      throw error;
+    }
+  }
+
+  public async findBlocksByCompany(companyId: number) {
+    try {
+      this.logger.log('Finding blocks by company', { companyId });
+
+      const blocks = await this.prisma.appointment.findMany({
+        where: {
+          companyId,
+          client: {
+            name: 'Bloqueio',
+          },
+        },
+        include: {
+          client: {
+            select: {
+              name: true,
+            },
+          },
+        },
+        orderBy: {
+          date: 'desc',
+        },
+      });
+
+      this.logger.log('Blocks found successfully', { 
+        companyId, 
+        blockCount: blocks.length 
+      });
+
+      return blocks;
+    } catch (error) {
+      this.logger.error('Error finding blocks by company', error.stack, { companyId });
+      throw error;
+    }
+  }
+
+  public async deleteBlock(id: number, companyId: number) {
+    try {
+      this.logger.log('Deleting block', { blockId: id, companyId });
+
+      // Verifica se o bloqueio existe e pertence à empresa
+      const block = await this.prisma.appointment.findUnique({
+        where: { id },
+        include: {
+          client: true,
+        },
+      });
+
+      if (!block) {
+        this.logger.warn('Block not found', { blockId: id });
+        throw new BadRequestException('Bloqueio não encontrado.');
+      }
+
+      if (block.client.name !== 'Bloqueio') {
+        this.logger.warn('Attempted to delete non-block appointment as block', { appointmentId: id });
+        throw new BadRequestException('Este agendamento não é um bloqueio.');
+      }
+
+      if (block.companyId !== companyId) {
+        this.logger.warn('Unauthorized block deletion attempt', { 
+          blockId: id, 
+          requestCompanyId: companyId, 
+          blockCompanyId: block.companyId 
+        });
+        throw new UnauthorizedException('Acesso não autorizado.');
+      }
+
+      const result = await this.prisma.appointment.delete({
+        where: { id },
+      });
+
+      this.logger.log('Block deleted successfully', { blockId: id, companyId });
+
+      return result;
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      this.logger.error('Error deleting block', error.stack, { blockId: id, companyId });
       throw error;
     }
   }

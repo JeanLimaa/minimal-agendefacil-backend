@@ -71,8 +71,26 @@ export class AppointmentController {
   }
 
   @Post('block')
-  createBlock(@Body() dto: BlockAppointmentDto) {
-    return this.appointmentService.createBlock(dto);
+  createBlock(
+    @Body() dto: BlockAppointmentDto,
+    @GetUser("companyId", ParseIntPipe) companyId: number
+  ) {
+    return this.appointmentService.createBlock(dto, companyId);
+  }
+
+  @Get('blocks/company')
+  findBlocksByCompany(
+    @GetUser("companyId", ParseIntPipe) companyId: number
+  ) {
+    return this.appointmentService.findBlocksByCompany(companyId);
+  }
+
+  @Delete('block/:id')
+  deleteBlock(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser("companyId", ParseIntPipe) companyId: number
+  ) {
+    return this.appointmentService.deleteBlock(id, companyId);
   }
 
   @Put('admin/:id')
