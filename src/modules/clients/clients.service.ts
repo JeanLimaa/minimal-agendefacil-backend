@@ -77,12 +77,67 @@ export class ClientsService {
     return client;
   }
 
-  public async update(id: number, createClientDto: CreateClientDto,){
+  public async update(id: number, createClientDto: CreateClientDto): Promise<Client> {
+    const client = await this.prisma.client.findFirst({
+      where: {
+        id,
+        companyId: createClientDto.companyId,
+      },
+    });
 
+    if (!client) {
+      throw new BadRequestException('Cliente não encontrado');
+    }
+
+    // Verificar se já existe outro cliente com o mesmo telefone
+    if (createClientDto.phone !== client.phone) {
+      const existingClient = await this.prisma.client.findFirst({
+        where: {
+          phone: createClientDto.phone,
+          companyId: createClientDto.companyId,
+          id: { not: id },
+        },
+      });
+
+      if (existingClient) {
+        throw new BadRequestException('Já existe um cliente com este telefone');
+      }
+    }
+
+    return await this.prisma.client.update({
+      where: { id },
+      data: {
+        name: createClientDto.name,
+        phone: createClientDto.phone,
+        email: createClientDto.email,
+      },
+    });
   }
 
-  public async remove(id: number, companyId: number){
+  public async remove(id: number, companyId: number): Promise<Client> {
+    const client = await this.prisma.client.findFirst({
+      where: {
+        id,
+        companyId,
+      },
+    });
 
+    if (!client) {
+      throw new BadRequestException('Cliente não encontrado');
+    }
+
+    // Verificar se o cliente tem agendamentos
+    const hasAppointments = await this.prisma.appointment.findFirst({
+      where: { clientId: id },
+    });
+
+    if (hasAppointments) {
+      throw new BadRequestException('Não é possível excluir um cliente com agendamentos');
+    }
+
+    return await this.prisma.client.delete({
+      where: { id },
+    });
   }
 
   public async blockClient(id: number, companyId: number): Promise<Client> {
