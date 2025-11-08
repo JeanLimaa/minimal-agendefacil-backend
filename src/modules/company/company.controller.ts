@@ -5,6 +5,7 @@ import { GetUser } from "src/common/decorators/GetUser.decorator";
 import { SkipAuth } from "src/common/decorators/SkipAuth.decorator";
 import { CompanyWorkingHoursDto } from "./dto/company-working-hours.dto";
 import { UpdateCompanyProfileDto } from "./dto/update-company-profile.dto";
+import { GetAvailableTimesDTO } from "./dto/get-available-times.dto";
 
 @UseGuards(JwtAuthGuard)
 @Controller('company')
@@ -39,9 +40,10 @@ export class CompanyController {
     @SkipAuth()
     @Post(':companyId/available-times')
     async getCompanyAvailableTimes(
-        @Param('companyId') companyId: number
+        @Param('companyId') companyId: number,
+        @Body() dto: GetAvailableTimesDTO
     ) {
-        return this.companyService.getCompanyAvailableTimes(companyId);
+        return this.companyService.getCompanyAvailableTimes(companyId, dto);
     }
 
     @Put('/working-hours')

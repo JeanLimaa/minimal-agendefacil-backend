@@ -1,11 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AppointmentStatus, Prisma } from '@prisma/client';
 import { DatabaseService } from 'src/services/Database.service';
 import slugify from 'slugify';
 import { UpdateCompanyProfileDto } from './dto/update-company-profile.dto';
 import { CreateCompanyAddressDTO } from './dto/create-company-address.dto';
+import { parseTimeToMinutes, validateTimeRange, validateDayOfWeek } from 'src/common/helpers/time.helper';
+import { TransactionService } from '../../common/services/transaction-context.service';
+import { GetAvailableTimesDTO } from './dto/get-available-times.dto';
+import { ServiceService } from '../service/service.service';
+import { addMinutes, endOfDay, format, isAfter, isBefore, isEqual, isSameDay, parseISO, startOfDay } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
-// Minimal DTO types for working hours (settings module removed in simplified version)
 type DailyWorkingHoursDto = {
     dayOfWeek: number;
     startTime: string;
@@ -16,8 +21,6 @@ type CompanyWorkingHoursDto = {
     serviceInterval?: number;
     workingHours: DailyWorkingHoursDto[];
 };
-import { parseTimeToMinutes, validateTimeRange, validateDayOfWeek } from 'src/common/helpers/time.helper';
-import { TransactionService } from '../../common/services/transaction-context.service';
 
 @Injectable()
 export class CompanyService {
@@ -26,11 +29,50 @@ export class CompanyService {
     constructor(
         private readonly prisma: DatabaseService,
         private readonly transactionService: TransactionService,
+       // private readonly servicesService: ServiceService
     ) { }
 
-    public async getCompanyAvailableTimes(companyId: number) {
-        return { availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00'] };
-    }
+    public async getCompanyAvailableTimes(companyId: number, dto: GetAvailableTimesDTO) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            include: {
+                companyWorkingHours: true
+            }
+        });
+
+        if (!company) throw new BadRequestException('Empresa não encontrada');
+
+        const parsedDate = parseISO(dto.date + " 00:00:00");
+        if (isNaN(parsedDate.getTime())) throw new BadRequestException('Data inválida. Esperado formato: "yyyy-MM-dd"');
+
+        const today = startOfDay(new Date());
+        if (isBefore(parsedDate, today)) throw new BadRequestException('A data não pode ser anterior a hoje.');
+
+        const dayOfWeek = parsedDate.getDay();
+
+        const workingHoursForDay = company.companyWorkingHours.find(wh => wh.dayOfWeek === dayOfWeek);
+
+        const companyStartHour = parseTimeToMinutes(workingHoursForDay.startTime);
+        const companyEndHour = parseTimeToMinutes(workingHoursForDay.endTime);
+        const interval = company?.intervalBetweenAppointments || 30;
+
+        const dayStart = startOfDay(parsedDate);
+
+        const availableTimes: string[] = [];
+
+        for (let minutes = companyStartHour; minutes <= companyEndHour; minutes += interval) {
+            const proposedTime = addMinutes(dayStart, minutes);
+
+            const isAvailable = await this.isTimeAvailable(companyId, proposedTime, interval);
+
+            if (isAvailable) {
+                const time = format(proposedTime, 'HH:mm', { locale: ptBR });
+                availableTimes.push(time);
+            }
+        }
+
+        return { availableTimes };
+    }   
 
     public async createCompany(
         data: Omit<Prisma.CompanyCreateInput, 'link'>
@@ -292,6 +334,51 @@ export class CompanyService {
             this.logger.error('Company working hours update failed', error.stack, { companyId });
             throw error;
         }
+    }
+     
+    private async isTimeAvailable(
+        companyId: number,
+        proposedTime: Date,
+        interval: number,
+        checkOnlyBlocks: boolean = false
+    ): Promise<boolean> {
+        const beforeDayStart = startOfDay(addMinutes(proposedTime, -1440)); // dia anterior
+        const afterDayEnd = endOfDay(addMinutes(proposedTime, 1440)); // dia seguinte
+
+        const today = startOfDay(new Date());
+        const now = new Date();
+        const appoinmentIsForToday = isSameDay(proposedTime, today);
+
+        if (appoinmentIsForToday && isBefore(proposedTime, now)) {
+            return false;
+        }
+
+        const appointments = await this.prisma.appointment.findMany({
+            where: {
+                companyId,
+                date: {
+                    gte: beforeDayStart,
+                    lte: afterDayEnd,
+                },
+                status: {
+                    not: AppointmentStatus.CANCELLED
+                },
+                ...(checkOnlyBlocks ? { isBlock: true } : {}),
+            },
+            include: { appointmentService: true },
+        });
+
+        return !appointments.some(appointment => {
+            const appointmentStart = new Date(appointment.date);
+
+            const appointmentDuration = appointment.duration || interval;
+
+            const appointmentEnd = addMinutes(appointmentStart, appointmentDuration);
+
+            const isIntersecting = isBefore(proposedTime, appointmentEnd) && isAfter(proposedTime, appointmentStart);
+
+            return isEqual(proposedTime, appointmentStart) || isIntersecting;
+        });
     }
 
     private async createOrUpdateCompanyAddress(companyId: number, data: CreateCompanyAddressDTO, prisma: Prisma.TransactionClient = this.prisma) {
