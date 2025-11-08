@@ -606,8 +606,10 @@ export class AppointmentService {
         throw new BadRequestException('Agendamento não encontrado.');
       }
 
-      const appointmentData = await this.prepareAppointmentData(data, 'admin', appointment.clientId, appointment.companyId, role);
-console.log(appointment.clientId, appointmentData.clientId)
+      const clientIdToUse = data.clientId ?? appointment.clientId;
+
+      const appointmentData = await this.prepareAppointmentData(data, 'admin', clientIdToUse, appointment.companyId, role);
+
       const updated = await prismaTransaction.appointment.update({
         where: { id },
         data: {
@@ -616,7 +618,6 @@ console.log(appointment.clientId, appointmentData.clientId)
           subTotalPrice: appointmentData.subTotalPrice,
           discount: appointmentData.discount,
           totalPrice: appointmentData.totalPrice,
-          //status: appointmentData.status,
           clientId: appointmentData.clientId,
         },
       });
